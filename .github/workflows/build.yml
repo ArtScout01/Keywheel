@@ -1,0 +1,28 @@
+name: Build plugin (Windows + macOS)
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DMW_COPY_AFTER_BUILD=OFF
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Collect VST3
+        shell: bash
+        run: |
+          mkdir out
+          find build -name "*.vst3" -maxdepth 6 -exec cp -R {} out/ \;
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ModeWheel-VST3-${{ runner.os }}
+          path: out
