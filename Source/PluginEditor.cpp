@@ -56,12 +56,12 @@ void WheelComponent::paint (juce::Graphics& g)
         g.strokePath (inner, juce::PathStrokeType (isHeld ? 4.0f : 2.0f));
         if (on)
         {
-            const auto ch = theory::chord (pc0, m, dia[i]);
+            const auto ch = theory::chord (pc0, m, dia[i], ext());
             g.setColour (juce::Colour (0xff141020));
             g.setFont (juce::FontOptions (R * 0.1f, juce::Font::bold));
             g.drawText (ch.degLabel, juce::Rectangle<float> (60, 24).withCentre (at (R * 0.55f, i) + juce::Point<float> (0, -8)), juce::Justification::centred);
             g.setFont (juce::FontOptions (R * 0.06f, juce::Font::plain));
-            g.drawText (ch.roman, juce::Rectangle<float> (60, 20).withCentre (at (R * 0.55f, i) + juce::Point<float> (0, 10)), juce::Justification::centred);
+            g.drawText (ch.roman, juce::Rectangle<float> (76, 20).withCentre (at (R * 0.55f, i) + juce::Point<float> (0, 10)), juce::Justification::centred);
         }
     }
 
@@ -102,7 +102,7 @@ void WheelComponent::mouseDown (const juce::MouseEvent& e)
     for (int d = 0; d < 7; ++d)
         if ((pc0 + iv[(size_t) d]) % 12 == pcAt)
         {
-            const auto ch = theory::chord (pc0, m, d);
+            const auto ch = theory::chord (pc0, m, d, ext());
             held.clear();
             juce::StringArray names;
             for (int x : ch.ints)
@@ -130,11 +130,42 @@ ModeWheelEditor::ModeWheelEditor (ModeWheelProcessor& p)
     : AudioProcessorEditor (&p), proc (p), wheel (p),
       keys (p.keyState, juce::MidiKeyboardComponent::horizontalKeyboard)
 {
-    setSize (560, 830);
+    setSize (560, 900);
+    setResizable (true, true);
+    setResizeLimits (560, 760, 560, 1200);
 
     for (int i = 0; i < 6; ++i) modeBox.addItem (theory::modeNames[i], i + 1);
     modeAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (p.apvts, "mode", modeBox);
     addAndMakeVisible (modeBox);
+
+    // sound + reverb
+    for (int i = 0; i < snd::numSounds; ++i) soundBox.addItem (snd::names[i], i + 1);
+    soundAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (p.apvts, "sound", soundBox);
+    reverbTypeBox.addItem ("Reverb: Hall", 1);
+    reverbTypeBox.addItem ("Reverb: Spring", 2);
+    reverbTypeAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (p.apvts, "reverbType", reverbTypeBox);
+    addAndMakeVisible (soundBox); addAndMakeVisible (reverbTypeBox);
+
+    setupKnob (knobs[0], "Fuzz",    "fuzz");
+    setupKnob (knobs[1], "Vibrato", "vibDepth");
+    setupKnob (knobs[2], "V.Rate",  "vibRate");
+    setupKnob (knobs[3], "Phaser",  "phaser");
+    setupKnob (knobs[4], "P.Rate",  "phaserRate");
+    setupKnob (knobs[5], "Echo",    "echoMix");
+    setupKnob (knobs[6], "E.Time",  "echoTime");
+    setupKnob (knobs[7], "E.Fdbk",  "echoFb");
+    setupKnob (knobs[8], "Reverb",  "reverb");
+
+    // chord type + borrowed chords
+    for (int i = 0; i < 3; ++i) extBox.addItem (theory::extNames[i], i + 1);
+    extAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (p.apvts, "chordType", extBox);
+    borrowBox.addItem ("Borrow: off", 1);
+    borrowBox.addItem ("Borrow: out-of-key notes", 2);
+    borrowBox.addItem ("Borrow: all notes", 3);
+    borrowAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (p.apvts, "borrow", borrowBox);
+    for (int i = 0; i < 6; ++i) borrowFromBox.addItem (juce::String ("from ") + theory::modeNames[i], i + 1);
+    borrowFromAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (p.apvts, "borrowFrom", borrowFromBox);
+    addAndMakeVisible (extBox); addAndMakeVisible (borrowBox); addAndMakeVisible (borrowFromBox);
 
     const auto& ps = theory::presets();
     for (size_t i = 0; i < ps.size(); ++i) presetBox.addItem (ps[i].name, (int) i + 1);
@@ -195,6 +226,23 @@ ModeWheelEditor::ModeWheelEditor (ModeWheelProcessor& p)
     addAndMakeVisible (openBtn); addAndMakeVisible (applyBtn);
 
     startTimerHz (15);
+}
+
+void ModeWheelEditor::setupKnob (Knob& k, const juce::String& text, const char* id)
+{
+    k.slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+    k.slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    k.slider.setPopupDisplayEnabled (true, true, this);
+    k.slider.setColour (juce::Slider::rotarySliderFillColourId, juce::Colour (0xffb48cff));
+    k.att = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (proc.apvts, id, k.slider);
+    if (auto* prm = proc.apvts.getParameter (id))
+        k.slider.setDoubleClickReturnValue (true, prm->convertFrom0to1 (prm->getDefaultValue()));
+    k.label.setText (text, juce::dontSendNotification);
+    k.label.setJustificationType (juce::Justification::centred);
+    k.label.setFont (juce::Font (juce::FontOptions (11.0f)));
+    k.label.setColour (juce::Label::textColourId, juce::Colour (0xffa69fc0));
+    addAndMakeVisible (k.slider);
+    addAndMakeVisible (k.label);
 }
 
 bool ModeWheelEditor::isAudioFile (const juce::File& f)
@@ -277,6 +325,10 @@ void ModeWheelEditor::timerCallback() { wheel.repaint(); }
 void ModeWheelEditor::paint (juce::Graphics& g)
 {
     g.fillAll (juce::Colour (0xff120e1f));
+    g.setColour (juce::Colour (0xff1d1730));
+    g.fillRoundedRectangle (fxArea.toFloat(), 10.0f);
+    g.setColour (juce::Colour (0xff4a3f78));
+    g.drawRoundedRectangle (fxArea.toFloat().reduced (1.0f), 10.0f, 1.5f);
     const auto a = dropArea.toFloat();
     g.setColour (dragOver ? juce::Colour (0xff3b2f66) : juce::Colour (0xff1d1730));
     g.fillRoundedRectangle (a, 10.0f);
@@ -288,14 +340,38 @@ void ModeWheelEditor::resized()
 {
     auto r = getLocalBounds().reduced (10);
     auto top = r.removeFromTop (30);
-    modeBox.setBounds (top.removeFromLeft (130));
-    top.removeFromLeft (8);
-    smartBtn.setBounds (top);
+    modeBox.setBounds (top.removeFromLeft (110));
+    top.removeFromLeft (6);
+    soundBox.setBounds (top.removeFromLeft (150));
+    top.removeFromLeft (6);
+    smartBtn.setBounds (top.removeFromLeft (112));
+    top.removeFromLeft (6);
+    reverbTypeBox.setBounds (top);
     r.removeFromTop (8);
     auto row = r.removeFromTop (30);
     playBtn.setBounds (row.removeFromRight (80)); row.removeFromRight (6);
     stopBtn.setBounds (row.removeFromRight (60)); row.removeFromRight (8);
     presetBox.setBounds (row);
+    r.removeFromTop (8);
+    {
+        auto row3 = r.removeFromTop (30);
+        const int w = (row3.getWidth() - 16) / 3;
+        extBox.setBounds (row3.removeFromLeft (w)); row3.removeFromLeft (8);
+        borrowBox.setBounds (row3.removeFromLeft (w + 20)); row3.removeFromLeft (8);
+        borrowFromBox.setBounds (row3);
+    }
+    r.removeFromTop (8);
+    fxArea = r.removeFromTop (88);
+    {
+        auto fa = fxArea.reduced (6, 6);
+        const int w = fa.getWidth() / (int) knobs.size();
+        for (auto& k : knobs)
+        {
+            auto cell = fa.removeFromLeft (w);
+            k.label.setBounds (cell.removeFromBottom (16));
+            k.slider.setBounds (cell);
+        }
+    }
     keys.setBounds (r.removeFromBottom (110).withX (0).withWidth (getWidth()));
     r.removeFromBottom (8);
     info.setBounds (r.removeFromBottom (30));
