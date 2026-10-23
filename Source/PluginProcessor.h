@@ -2,6 +2,8 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
 #include "Theory.h"
+#include "SoundEngine.h"
+#include "Effects.h"
 
 struct SawSound : juce::SynthesiserSound
 {
@@ -9,40 +11,44 @@ struct SawSound : juce::SynthesiserSound
     bool appliesToChannel (int) override { return true; }
 };
 
-class SawVoice : public juce::SynthesiserVoice
+class SynthVoice : public juce::SynthesiserVoice
 {
 public:
+    explicit SynthVoice (std::atomic<float>* soundParam) : sound (soundParam) {}
     bool canPlaySound (juce::SynthesiserSound* s) override { return dynamic_cast<SawSound*> (s) != nullptr; }
     void startNote (int midi, float vel, juce::SynthesiserSound*, int) override
     {
-        freq = juce::MidiMessage::getMidiNoteInHertz (midi);
-        level = vel * 0.15f; phase = 0; lp = 0;
-        adsr.setSampleRate (getSampleRate());
-        adsr.setParameters ({ 0.01f, 0.25f, 0.7f, 0.35f });
-        adsr.noteOn();
+        engine.start ((int) sound->load(), (float) juce::MidiMessage::getMidiNoteInHertz (midi), vel, getSampleRate(),
+                      (uint32_t) juce::Random::getSystemRandom().nextInt());
     }
     void stopNote (float, bool allowTail) override
     {
-        if (allowTail) adsr.noteOff(); else { adsr.reset(); clearCurrentNote(); }
+        if (allowTail) engine.release(); else { engine.stopNow(); clearCurrentNote(); }
     }
     void pitchWheelMoved (int) override {}
     void controllerMoved (int, int) override {}
     void renderNextBlock (juce::AudioBuffer<float>& b, int start, int num) override
     {
-        if (! adsr.isActive()) { clearCurrentNote(); return; }
-        const double sr = getSampleRate();
+        if (! engine.active()) { clearCurrentNote(); return; }
+        const int chans = b.getNumChannels();
         for (int i = 0; i < num; ++i)
         {
-            const float e = adsr.getNextSample();
-            lp += 0.2f * ((float) (2.0 * phase - 1.0) - lp);
-            const float v = lp * e * level;
-            for (int ch = 0; ch < b.getNumChannels(); ++ch) b.addSample (ch, start + i, v);
-            phase += freq / sr; if (phase >= 1.0) phase -= 1.0;
-            if (! adsr.isActive()) { clearCurrentNote(); break; }
+            float l = 0.0f, r = 0.0f;
+            engine.next (l, r);
+            if (chans > 1)
+            {
+                b.addSample (0, start + i, l);
+                b.addSample (1, start + i, r);
+                for (int ch = 2; ch < chans; ++ch) b.addSample (ch, start + i, 0.5f * (l + r));
+            }
+            else if (chans == 1)
+                b.addSample (0, start + i, 0.5f * (l + r));
+            if (! engine.active()) { clearCurrentNote(); break; }
         }
     }
 private:
-    juce::ADSR adsr; double freq = 440, phase = 0; float level = 0.1f, lp = 0;
+    std::atomic<float>* sound;
+    snd::Engine engine;
 };
 
 class ModeWheelProcessor : public juce::AudioProcessor
@@ -78,11 +84,18 @@ public:
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     juce::Synthesiser synth;
+    juce::Reverb reverb;
+    fx::Chain fxChain;
     std::atomic<int> progPreset { 0 };
     std::atomic<bool> progStartReq { false }, progStopReq { false }, progRunning { false };
     int progStep = 0;
     double progCounter = 0, sampleRate = 44100;
     std::vector<int> progHeld;
+
+    // Which output notes were started for each incoming note (so note-offs always match,
+    // even if parameters change while a chord is held)
+    struct HeldChord { int count = 0; std::array<int, 6> notes {}; };
+    std::array<HeldChord, 16 * 128> heldMap;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ModeWheelProcessor)
 };
