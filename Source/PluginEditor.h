@@ -1,6 +1,7 @@
 #pragma once
 #include "PluginProcessor.h"
 #include "FileAnalyser.h"
+#include <array>
 
 class WheelComponent : public juce::Component
 {
@@ -14,6 +15,7 @@ public:
 private:
     int tonic() const { return (int) proc.apvts.getRawParameterValue ("tonic")->load(); }
     int mode()  const { return (int) proc.apvts.getRawParameterValue ("mode")->load(); }
+    int ext()   const { return (int) proc.apvts.getRawParameterValue ("chordType")->load(); }
     int hitSegment (juce::Point<float> p, bool& outerRing) const;
     ModeWheelProcessor& proc;
     std::vector<int> held;
@@ -43,7 +45,18 @@ private:
     static bool isAudioFile (const juce::File&);
     ModeWheelProcessor& proc;
     WheelComponent wheel;
-    juce::ComboBox modeBox, presetBox;
+    juce::ComboBox modeBox, presetBox, extBox, borrowBox, borrowFromBox, soundBox, reverbTypeBox;
+
+    // Effects row (Fuzz, Vibrato, Phaser, Echo, Reverb)
+    struct Knob
+    {
+        juce::Slider slider;
+        juce::Label label;
+        std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> att;
+    };
+    void setupKnob (Knob&, const juce::String& text, const char* paramId);
+    std::array<Knob, 9> knobs;
+    juce::Rectangle<int> fxArea;
     juce::TextButton playBtn { "Play loop" }, stopBtn { "Stop" };
     juce::ToggleButton smartBtn { "Smart chords" };
     juce::Label info;
@@ -57,7 +70,7 @@ private:
     analysis::Result lastResult;
     bool haveKey = false, dragOver = false;
     juce::MidiKeyboardComponent keys;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modeAtt;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modeAtt, extAtt, borrowAtt, borrowFromAtt, soundAtt, reverbTypeAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> smartAtt;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ModeWheelEditor)
 };
